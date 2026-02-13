@@ -1,0 +1,79 @@
+{
+  "example_1_simple": {
+    "description": "Simple example with 1 video clip and audio URL",
+    "request": {
+      "audio_url": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
+      "video_urls": [
+        "https://assets.mixkit.co/videos/preview/mixkit-person-typing-on-a-laptop-4904-large.mp4"
+      ],
+      "title": "Coding Tutorial",
+      "source": "Source: Mixkit"
+    }
+  },
+  "example_2_multiple_clips": {
+    "description": "Example with 3 video clips from Mixkit (free stock videos)",
+    "request": {
+      "audio_url": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
+      "video_urls": [
+        "https://assets.mixkit.co/videos/preview/mixkit-waves-in-the-water-1164-large.mp4",
+        "https://assets.mixkit.co/videos/preview/mixkit-sunset-in-the-clouds-2408-large.mp4",
+        "https://assets.mixkit.co/videos/preview/mixkit-palm-tree-1192-large.mp4"
+      ],
+      "title": "Nature Compilation",
+      "source": "Source: Mixkit Free Videos"
+    }
+  },
+  "example_3_with_base64": {
+    "description": "Example using base64 audio (you need to replace with actual base64 string)",
+    "note": "To generate base64: cat audio.mp3 | base64",
+    "request": {
+      "audio_base64": "YOUR_BASE64_AUDIO_STRING_HERE",
+      "video_urls": [
+        "https://assets.mixkit.co/videos/preview/mixkit-digital-animation-of-futuristic-architecture-50609-large.mp4",
+        "https://assets.mixkit.co/videos/preview/mixkit-tech-tunnel-4220-large.mp4"
+      ],
+      "title": "Tech Video",
+      "source": "Source: Example"
+    }
+  },
+  "curl_commands": {
+    "test_health": "curl https://YOUR-APP.onrender.com/health",
+    "test_example_1": "curl -X POST https://YOUR-APP.onrender.com/assemble -H 'Content-Type: application/json' -d @examples/request_1.json --output video1.mp4",
+    "test_local": "curl -X POST http://localhost:5000/assemble -H 'Content-Type: application/json' -d '{\"audio_url\":\"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3\",\"video_urls\":[\"https://assets.mixkit.co/videos/preview/mixkit-waves-in-the-water-1164-large.mp4\"],\"title\":\"Test\",\"source\":\"Source: Test\"}' --output test.mp4"
+  },
+  "n8n_workflow_snippets": {
+    "http_request_basic": {
+      "method": "POST",
+      "url": "https://your-app.onrender.com/assemble",
+      "authentication": "None",
+      "sendBody": true,
+      "bodyContentType": "json",
+      "responseFormat": "file",
+      "jsonParameters": true
+    },
+    "body_expression_groq_tts": "{{ JSON.stringify({\n  \"audio_base64\": $('Groq TTS').item.json.data.toString('base64'),\n  \"video_urls\": [\n    $('Pexels').item.json.videos[0].video_files[0].link,\n    $('Pexels').item.json.videos[1].video_files[0].link,\n    $('Pexels').item.json.videos[2].video_files[0].link\n  ],\n  \"title\": $('RSS Read1').item.json.title.substring(0, 50),\n  \"source\": \"Source: \" + $('RSS Read1').item.json.title.split(' - ').pop()\n}) }}",
+    "body_expression_simple": "{{ JSON.stringify({\n  \"audio_url\": $('Previous Node').item.json.audio_url,\n  \"video_urls\": $('Previous Node').item.json.video_array,\n  \"title\": $('Previous Node').item.json.video_title,\n  \"source\": \"Source: \" + $('Previous Node').item.json.source_name\n}) }}"
+  },
+  "pexels_api_integration": {
+    "note": "Get video URLs from Pexels API",
+    "example_pexels_response_path": "videos[0].video_files[0].link",
+    "filter_vertical_videos": "videos[0].video_files.filter(vf => vf.width < vf.height)[0].link",
+    "common_pexels_qualities": [
+      "For vertical shorts, look for files with width=1080 and height=1920",
+      "Or use width=720 and height=1280",
+      "Filter by: file.width < file.height (portrait orientation)"
+    ]
+  },
+  "free_sample_audio_urls": [
+    "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
+    "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
+    "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3"
+  ],
+  "free_sample_video_urls": [
+    "https://assets.mixkit.co/videos/preview/mixkit-waves-in-the-water-1164-large.mp4",
+    "https://assets.mixkit.co/videos/preview/mixkit-sunset-in-the-clouds-2408-large.mp4",
+    "https://assets.mixkit.co/videos/preview/mixkit-palm-tree-1192-large.mp4",
+    "https://assets.mixkit.co/videos/preview/mixkit-person-typing-on-a-laptop-4904-large.mp4",
+    "https://assets.mixkit.co/videos/preview/mixkit-digital-animation-of-futuristic-architecture-50609-large.mp4"
+  ]
+}
