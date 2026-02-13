@@ -1,0 +1,30 @@
+name: Docker Build Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build Docker image
+      run: docker build -t video-assembler:test .
+
+    - name: Run container
+      run: |
+        docker run -d -p 5000:5000 --name test-container video-assembler:test
+        sleep 10
+
+    - name: Test health endpoint
+      run: |
+        curl -f http://localhost:5000/health || exit 1
+
+    - name: Stop container
+      if: always()
+      run: docker stop test-container || true
