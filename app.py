@@ -95,6 +95,33 @@ def force_cleanup():
     cleanup_all_jobs()
     return jsonify({"status": "cleaned"})
 
+@app.route("/convert", methods=["POST"])
+def convert_audio():
+    cleanup_all_jobs()
+    job_id = str(uuid.uuid4())[:8]
+    job_dir = os.path.join(WORK_DIR, job_id)
+    os.makedirs(job_dir, exist_ok=True)
+    try:
+        audio_file = request.files.get("file")
+        if not audio_file:
+            return jsonify({"error": "No file"}), 400
+        wav_path = os.path.join(job_dir, "input.wav")
+        mp3_path = os.path.join(job_dir, "output.mp3")
+        audio_file.save(wav_path)
+        subprocess.run([
+            "ffmpeg", "-y", "-i", wav_path,
+            "-c:a", "libmp3lame", "-b:a", "128k",
+            mp3_path
+        ], capture_output=True, timeout=60)
+        if os.path.exists(mp3_path) and os.path.getsize(mp3_path) > 0:
+            return send_file(mp3_path, mimetype="audio/mpeg",
+                           as_attachment=True, download_name="audio.mp3")
+        return jsonify({"error": "Conversion failed"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cleanup_job(job_dir)
+
 
 @app.route("/assemble", methods=["POST"])
 def assemble():
