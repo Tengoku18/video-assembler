@@ -12,18 +12,12 @@ app = Flask(__name__)
 WORK_DIR = "/tmp/video_work"
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 MAX_RETRIES = 3
-RETRY_DELAY = 5  # seconds
+RETRY_DELAY = 5
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 
 
-# ============================================================
-# CLEANUP HELPERS
-# ============================================================
-
 def cleanup_all_jobs():
-    """Remove ALL old job directories to free memory"""
     if os.path.exists(WORK_DIR):
         for item in os.listdir(WORK_DIR):
             item_path = os.path.join(WORK_DIR, item)
@@ -37,7 +31,6 @@ def cleanup_all_jobs():
 
 
 def cleanup_job(job_dir):
-    """Clean a specific job directory"""
     try:
         shutil.rmtree(job_dir, ignore_errors=True)
     except:
@@ -46,7 +39,6 @@ def cleanup_job(job_dir):
 
 
 def get_disk_usage():
-    """Get current disk usage of work directory"""
     total_size = 0
     if os.path.exists(WORK_DIR):
         for dirpath, dirnames, filenames in os.walk(WORK_DIR):
@@ -56,12 +48,7 @@ def get_disk_usage():
     return total_size
 
 
-# ============================================================
-# RETRY HELPERS
-# ============================================================
-
 def download_with_retry(url, dest_path, max_retries=MAX_RETRIES):
-    """Download a file with retry logic"""
     for attempt in range(max_retries):
         try:
             r = requests.get(url, timeout=60, stream=True)
@@ -73,8 +60,6 @@ def download_with_retry(url, dest_path, max_retries=MAX_RETRIES):
             if file_size > 0:
                 app.logger.info(f"Downloaded {url[:80]}... ({file_size} bytes)")
                 return True
-            else:
-                app.logger.warning(f"Empty file from {url[:80]}... attempt {attempt + 1}")
         except Exception as e:
             app.logger.warning(f"Download attempt {attempt + 1} failed: {str(e)[:200]}")
             if attempt < max_retries - 1:
@@ -83,7 +68,6 @@ def download_with_retry(url, dest_path, max_retries=MAX_RETRIES):
 
 
 def groq_tts_with_retry(script_text, audio_path, max_retries=MAX_RETRIES):
-    """Generate TTS audio using Groq with retry logic"""
     for attempt in range(max_retries):
         try:
             app.logger.info(f"TTS attempt {attempt + 1}, script length: {len(script_text)} chars")
@@ -101,7 +85,6 @@ def groq_tts_with_retry(script_text, audio_path, max_retries=MAX_RETRIES):
                 },
                 timeout=120
             )
-
             if response.status_code == 200 and len(response.content) > 1000:
                 with open(audio_path, "wb") as f:
                     f.write(response.content)
@@ -122,29 +105,6 @@ def groq_tts_with_retry(script_text, audio_path, max_retries=MAX_RETRIES):
     return False
 
 
-def run_ffmpeg_with_retry(cmd, description="FFmpeg command", max_retries=2):
-    """Run an FFmpeg command with retry"""
-    for attempt in range(max_retries):
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-            if result.returncode == 0:
-                app.logger.info(f"{description} succeeded")
-                return result
-            else:
-                app.logger.warning(f"{description} attempt {attempt + 1} failed: {result.stderr[-300:]}")
-                if attempt < max_retries - 1:
-                    time.sleep(2)
-        except subprocess.TimeoutExpired:
-            app.logger.warning(f"{description} timed out on attempt {attempt + 1}")
-        except Exception as e:
-            app.logger.warning(f"{description} exception: {str(e)[:200]}")
-    return None
-
-
-# ============================================================
-# ENDPOINTS
-# ============================================================
-
 @app.route("/health", methods=["GET"])
 def health():
     disk_usage = get_disk_usage()
@@ -158,14 +118,13 @@ def health():
 
 @app.route("/cleanup", methods=["POST"])
 def force_cleanup():
-    """Emergency cleanup endpoint"""
     cleanup_all_jobs()
     return jsonify({"status": "cleaned", "disk_usage_mb": round(get_disk_usage() / (1024 * 1024), 2)})
 
 
 @app.route("/assemble", methods=["POST"])
 def assemble():
-    # ---- STEP 0: Clean up before starting ----
+    # Clean up before starting
     cleanup_all_jobs()
     app.logger.info("=" * 50)
     app.logger.info("NEW VIDEO ASSEMBLY JOB STARTED")
@@ -181,10 +140,7 @@ def assemble():
         video_urls = data.get("video_urls", [])
         title = data.get("title", "News")
         source = data.get("source", "")
-
-        # Also support audio_url for backward compatibility
         audio_url = data.get("audio_url", "")
-        audio_base64 = data.get("audio_base64", "")
 
         if not video_urls:
             return jsonify({"error": "No video URLs provided"}), 400
@@ -193,28 +149,14 @@ def assemble():
         audio_path = os.path.join(job_dir, "audio.wav")
 
         if script and GROQ_API_KEY:
-            # Generate TTS on server
             app.logger.info("Generating TTS audio on server...")
             if not groq_tts_with_retry(script, audio_path):
                 return jsonify({"error": "TTS generation failed after retries"}), 500
-
         elif audio_url:
-            # Download audio from URL
-            app.logger.info(f"Downloading audio from URL...")
             if not download_with_retry(audio_url, audio_path):
-                return jsonify({"error": "Audio download failed after retries"}), 500
-
-        elif audio_base64:
-            # Decode base64 audio
-            import base64
-            try:
-                with open(audio_path, "wb") as f:
-                    f.write(base64.b64decode(audio_base64))
-                app.logger.info("Audio decoded from base64")
-            except Exception as e:
-                return jsonify({"error": f"Base64 decode failed: {str(e)}"}), 400
+                return jsonify({"error": "Audio download failed"}), 500
         else:
-            return jsonify({"error": "No audio source provided. Send 'script', 'audio_url', or 'audio_base64'"}), 400
+            return jsonify({"error": "No audio source. Send 'script' or 'audio_url'"}), 400
 
         # ---- STEP 2: Get audio duration ----
         result = subprocess.run(
@@ -224,103 +166,133 @@ def assemble():
         )
 
         if not result.stdout.strip():
-            return jsonify({
-                "error": "Could not determine audio duration",
-                "detail": result.stderr[:300]
-            }), 500
+            return jsonify({"error": "Could not determine audio duration"}), 500
 
         audio_duration = float(result.stdout.strip())
         app.logger.info(f"Audio duration: {audio_duration:.1f}s")
 
-        if audio_duration > 120:
-            app.logger.warning(f"Audio is {audio_duration}s, trimming to 60s")
-            trimmed_path = os.path.join(job_dir, "audio_trimmed.wav")
-            subprocess.run([
-                "ffmpeg", "-y", "-i", audio_path,
-                "-t", "60", "-c", "copy", trimmed_path
-            ], capture_output=True, timeout=30)
-            if os.path.exists(trimmed_path):
-                os.replace(trimmed_path, audio_path)
+        # Trim if too long
+        if audio_duration > 65:
+            trimmed = os.path.join(job_dir, "trimmed.wav")
+            subprocess.run(["ffmpeg", "-y", "-i", audio_path, "-t", "60", "-c", "copy", trimmed],
+                          capture_output=True, timeout=30)
+            if os.path.exists(trimmed):
+                os.replace(trimmed, audio_path)
                 audio_duration = 60.0
 
-        # ---- STEP 3: Download video clips ----
-        video_paths = []
-        for i, url in enumerate(video_urls[:3]):
-            vpath = os.path.join(job_dir, f"clip_{i}.mp4")
-            if download_with_retry(url, vpath):
-                video_paths.append(vpath)
-            else:
-                app.logger.warning(f"Skipping clip {i} - download failed")
+        # Convert audio to AAC now to save memory later
+        audio_aac = os.path.join(job_dir, "audio.m4a")
+        subprocess.run([
+            "ffmpeg", "-y", "-i", audio_path,
+            "-c:a", "aac", "-b:a", "96k", "-ac", "1",
+            audio_aac
+        ], capture_output=True, timeout=60)
 
-        if not video_paths:
-            return jsonify({"error": "All video downloads failed"}), 500
+        # Delete original WAV to free memory
+        if os.path.exists(audio_aac) and os.path.getsize(audio_aac) > 0:
+            os.remove(audio_path)
+            audio_path = audio_aac
+            app.logger.info("Converted audio to AAC to save memory")
+        gc.collect()
 
-        app.logger.info(f"Downloaded {len(video_paths)} video clips")
-
-        # ---- STEP 4: Calculate time per clip ----
-        time_per_clip = audio_duration / len(video_paths)
+        # ---- STEP 3: Download and process clips ONE AT A TIME ----
+        # Instead of downloading all then normalizing all,
+        # we process each clip immediately and delete the original
+        time_per_clip = audio_duration / min(len(video_urls), 3)
         app.logger.info(f"Time per clip: {time_per_clip:.1f}s")
 
-        # ---- STEP 5: Normalize clips to 1080x1920 vertical ----
         normalized = []
-        for i, vpath in enumerate(video_paths):
-            npath = os.path.join(job_dir, f"norm_{i}.mp4")
+        for i, url in enumerate(video_urls[:3]):
+            raw_path = os.path.join(job_dir, f"raw_{i}.mp4")
+            norm_path = os.path.join(job_dir, f"norm_{i}.ts")  # Use .ts for seamless concat
+
+            # Download
+            if not download_with_retry(url, raw_path):
+                app.logger.warning(f"Skipping clip {i}")
+                continue
+
+            # Normalize immediately - output as MPEG-TS for concat
             cmd = [
-                "ffmpeg", "-y", "-i", vpath,
+                "ffmpeg", "-y", "-i", raw_path,
                 "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1",
-                "-r", "25", "-c:v", "libx264", "-preset", "ultrafast",
-                "-crf", "28", "-an", "-t", str(time_per_clip),
-                npath
+                "-r", "25",
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30",
+                "-an",
+                "-t", str(time_per_clip),
+                "-f", "mpegts",
+                norm_path
             ]
-            result = run_ffmpeg_with_retry(cmd, f"Normalize clip {i}")
-            if result and os.path.exists(npath) and os.path.getsize(npath) > 0:
-                normalized.append(npath)
-                # Delete original clip to free memory
-                os.remove(vpath)
-            else:
-                app.logger.error(f"Clip {i} normalization failed completely")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
-        if not normalized:
-            return jsonify({"error": "All clip normalizations failed"}), 500
-
-        app.logger.info(f"Normalized {len(normalized)} clips")
-
-        # ---- STEP 6: Concatenate clips ----
-        concat_path = os.path.join(job_dir, "concat.txt")
-        with open(concat_path, "w") as f:
-            for npath in normalized:
-                f.write(f"file '{npath}'\n")
-
-        # ---- STEP 7: Final assembly ----
-        output_path = os.path.join(job_dir, "final.mp4")
-        cmd = [
-            "ffmpeg", "-y",
-            "-f", "concat", "-safe", "0", "-i", concat_path,
-            "-i", audio_path,
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
-            "-c:a", "aac", "-b:a", "128k",
-            "-shortest", "-movflags", "+faststart",
-            output_path
-        ]
-
-        result = run_ffmpeg_with_retry(cmd, "Final assembly")
-
-        if result and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-            file_size = os.path.getsize(output_path)
-            app.logger.info(f"Video created: {file_size} bytes ({file_size / (1024*1024):.1f} MB)")
-
-            # Delete everything except final output to free memory
-            for npath in normalized:
-                try:
-                    os.remove(npath)
-                except:
-                    pass
+            # Delete raw immediately to free memory
             try:
-                os.remove(audio_path)
+                os.remove(raw_path)
             except:
                 pass
             gc.collect()
 
+            if os.path.exists(norm_path) and os.path.getsize(norm_path) > 0:
+                normalized.append(norm_path)
+                app.logger.info(f"Clip {i} normalized OK ({os.path.getsize(norm_path)} bytes)")
+            else:
+                app.logger.error(f"Clip {i} failed: {result.stderr[-200:]}")
+
+        if not normalized:
+            return jsonify({"error": "All clip normalizations failed"}), 500
+
+        # ---- STEP 4: Concat using MPEG-TS concat protocol (no re-encode!) ----
+        # This uses almost zero memory compared to file-based concat
+        concat_input = "concat:" + "|".join(normalized)
+        concat_video = os.path.join(job_dir, "concat.mp4")
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", concat_input,
+            "-c:v", "copy",  # NO re-encode = minimal memory
+            "-f", "mp4",
+            concat_video
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+
+        if not os.path.exists(concat_video) or os.path.getsize(concat_video) == 0:
+            app.logger.error(f"Concat failed: {result.stderr[-300:]}")
+            return jsonify({"error": "Concat failed", "detail": result.stderr[-300:]}), 500
+
+        app.logger.info(f"Concat OK ({os.path.getsize(concat_video)} bytes)")
+
+        # Delete normalized clips to free memory
+        for npath in normalized:
+            try:
+                os.remove(npath)
+            except:
+                pass
+        gc.collect()
+
+        # ---- STEP 5: Merge audio + video (stream copy video, minimal memory) ----
+        output_path = os.path.join(job_dir, "final.mp4")
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", concat_video,
+            "-i", audio_path,
+            "-c:v", "copy",       # Don't re-encode video
+            "-c:a", "aac", "-b:a", "96k",
+            "-shortest",
+            "-movflags", "+faststart",
+            output_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+
+        # Delete intermediates
+        try:
+            os.remove(concat_video)
+            os.remove(audio_path)
+        except:
+            pass
+        gc.collect()
+
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            file_size = os.path.getsize(output_path)
+            app.logger.info(f"DONE! Video: {file_size} bytes ({file_size / (1024*1024):.1f} MB)")
             return send_file(
                 output_path,
                 mimetype="video/mp4",
@@ -328,17 +300,17 @@ def assemble():
                 download_name=f"short_{job_id}.mp4"
             )
         else:
-            stderr = result.stderr[-500:] if result else "FFmpeg command failed"
-            return jsonify({"error": "Final video not created", "detail": stderr}), 500
+            return jsonify({
+                "error": "Final merge failed",
+                "detail": result.stderr[-500:]
+            }), 500
 
     except Exception as e:
         app.logger.error(f"Exception: {str(e)}")
         return jsonify({"error": str(e)}), 500
-
     finally:
         cleanup_job(job_dir)
         app.logger.info("Job cleanup complete")
-        app.logger.info("=" * 50)
 
 
 if __name__ == "__main__":
